@@ -29,27 +29,40 @@ HTML_TEMPLATE = """
 <html lang="en">
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AuraPay Terminal</title>
+    <title>AuraPay | Secure Terminal</title>
     <script src="https://www.paypal.com/sdk/js?client-id={{ client_id }}&currency=USD"></script>
     <style>
-        :root { --accent: #00ff88; --bg: #050505; }
-        body { background: var(--bg); color: white; font-family: sans-serif; margin: 0; padding: 20px; text-align: center; }
-        .card { background: #111; border: 1px solid #222; padding: 30px; border-radius: 30px; max-width: 400px; margin: 0 auto; }
-        .amount-input { background: transparent; border: none; color: white; font-size: 3.5rem; width: 100%; text-align: center; outline: none; margin: 10px 0; font-weight: 800; }
-        .mode-toggle { display: flex; gap: 10px; margin-bottom: 20px; }
-        .mode-btn { flex: 1; padding: 10px; border-radius: 12px; border: 1px solid #333; background: #1a1a1a; color: white; cursor: pointer; transition: 0.2s; }
-        .mode-btn.active { background: var(--accent); color: black; border-color: var(--accent); font-weight: bold; }
-        .email-field { width: 100%; padding: 15px; border-radius: 12px; border: 1px solid #333; background: #000; color: white; margin-bottom: 20px; display: none; box-sizing: border-box; }
+        :root { --accent: #00ff88; --bg: #050505; --card-bg: #111; }
+        body { background: var(--bg); color: white; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; text-align: center; }
+        .card { background: var(--card-bg); border: 1px solid #222; padding: 30px; border-radius: 35px; max-width: 400px; margin: 0 auto; box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
+        .logo { color: var(--accent); font-weight: 900; font-size: 2rem; margin-bottom: 5px; letter-spacing: -1px; }
+        .status-badge { font-size: 10px; background: rgba(0,255,136,0.1); color: var(--accent); padding: 4px 12px; border-radius: 20px; letter-spacing: 2px; text-transform: uppercase; }
         
-        /* The Dynamic Label */
-        .action-label { font-weight: bold; color: var(--accent); margin-bottom: 15px; font-size: 1.2rem; display: block; }
+        .amount-input { background: transparent; border: none; color: white; font-size: 4rem; width: 100%; text-align: center; outline: none; margin: 20px 0; font-weight: 800; }
+        
+        .mode-toggle { display: flex; gap: 10px; margin-bottom: 25px; background: #000; padding: 5px; border-radius: 18px; border: 1px solid #222; }
+        .mode-btn { flex: 1; padding: 12px; border-radius: 14px; border: none; background: transparent; color: #666; cursor: pointer; transition: 0.3s; font-weight: 600; }
+        .mode-btn.active { background: var(--accent); color: black; }
+        
+        .email-field { width: 100%; padding: 18px; border-radius: 15px; border: 1px solid #333; background: #000; color: white; margin-bottom: 20px; display: none; box-sizing: border-box; font-size: 16px; }
+        
+        .action-label { font-weight: 700; color: var(--accent); margin-bottom: 15px; font-size: 1.1rem; display: block; opacity: 0.9; }
         #paypal-button-container { min-height: 150px; }
+
+        .legal-footer { margin-top: 25px; font-size: 11px; color: #555; line-height: 1.5; }
+        .legal-link { color: #888; text-decoration: underline; cursor: pointer; }
+
+        /* Modal Logic */
+        .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:9999; overflow-y: auto; padding: 20px; box-sizing: border-box;}
+        .modal-content { background: #1a1a1a; padding: 30px; border-radius: 25px; text-align: left; max-width: 500px; margin: 40px auto; border: 1px solid #333; }
+        .close-modal { background: var(--accent); color: black; border: none; padding: 10px 20px; border-radius: 10px; font-weight: bold; width: 100%; margin-top: 20px; }
     </style>
 </head>
 <body>
+
     <div class="card">
-        <h1 style="color: var(--accent); margin-bottom: 5px;">AuraPay</h1>
-        <p style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">LIVE TERMINAL</p>
+        <div class="logo">AuraPay</div>
+        <span class="status-badge">Live Terminal</span>
 
         <input type="number" id="amount" class="amount-input" value="0.01" step="0.01" oninput="updateActionText()">
 
@@ -58,11 +71,25 @@ HTML_TEMPLATE = """
             <button id="snd-btn" class="mode-btn" onclick="setMode('send')">Send</button>
         </div>
 
-        <input type="email" id="recipient-email" class="email-field" placeholder="Recipient PayPal Email">
+        <input type="email" id="recipient-email" class="email-field" placeholder="Enter recipient email">
 
         <span id="dynamic-action-text" class="action-label">Pay $0.01</span>
 
         <div id="paypal-button-container"></div>
+
+        <div class="legal-footer">
+            By proceeding, you agree to our <br>
+            <span class="legal-link" onclick="openModal('tos')">Terms of Service</span> & 
+            <span class="legal-link" onclick="openModal('refund')">Refund Policy</span>
+        </div>
+    </div>
+
+    <div id="legalModal" class="modal">
+        <div class="modal-content">
+            <h2 id="modalTitle" style="color:var(--accent)"></h2>
+            <div id="modalBody" style="font-size: 14px; line-height: 1.6; color: #ccc;"></div>
+            <button class="close-modal" onclick="closeModal()">I Understand</button>
+        </div>
     </div>
 
     <script>
@@ -83,12 +110,33 @@ HTML_TEMPLATE = """
             updateActionText();
         }
 
+        // Modal Content
+        const legalData = {
+            tos: {
+                title: "Terms of Service",
+                body: "AuraPay is a technical bridge powered by PayPal. We do not store card data or manage funds directly. Users are responsible for providing correct recipient emails. Unauthorized use for illegal activities is strictly prohibited. Transactions are subject to PayPal's standard merchant fees."
+            },
+            refund: {
+                title: "Refund Policy",
+                body: "All transactions are final once captured. Refunds must be requested directly from the recipient merchant via the PayPal Resolution Center. AuraPay cannot reverse processed payments as funds move directly through the PayPal network."
+            }
+        };
+
+        function openModal(type) {
+            document.getElementById('modalTitle').innerText = legalData[type].title;
+            document.getElementById('modalBody').innerText = legalData[type].body;
+            document.getElementById('legalModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('legalModal').style.display = 'none';
+        }
+
         paypal.Buttons({
             style: { shape: 'pill', color: 'gold', layout: 'vertical', label: 'pay' },
             createOrder: function(data, actions) {
                 const amt = document.getElementById('amount').value;
                 const email = document.getElementById('recipient-email').value;
-                
                 let url = '/create-order?amt=' + amt;
                 if(mode === 'send' && email) url += '&to=' + encodeURIComponent(email);
 
@@ -100,7 +148,7 @@ HTML_TEMPLATE = """
                 return fetch('/capture/' + data.orderID, { method: 'POST' })
                     .then(res => res.json())
                     .then(() => {
-                        alert('AuraPay Success: Transaction Complete');
+                        alert('Transaction Complete! Check your PayPal account for details.');
                         location.reload();
                     });
             }
@@ -119,17 +167,13 @@ def create_order():
     token = get_access_token()
     amount = request.args.get('amt', '0.01')
     payee_email = request.args.get('to')
-
     payload = {
         "intent": "CAPTURE",
-        "purchase_units": [{
-            "amount": {"currency_code": "USD", "value": amount}
-        }]
+        "purchase_units": [{"amount": {"currency_code": "USD", "value": amount}}]
     }
-
     if payee_email:
         payload["purchase_units"][0]["payee"] = {"email_address": payee_email}
-
+    
     r = requests.post(f"{PAYPAL_BASE_URL}/v2/checkout/orders", json=payload, 
                      headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     return jsonify(r.json())
