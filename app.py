@@ -28,13 +28,14 @@ HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
+    <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>AuraPay Terminal</title>
     <script src="https://www.paypal.com/sdk/js?client-id={{ client_id }}&currency=USD"></script>
     <style>
         :root { --accent: #00ff88; --bg: #050505; }
         body { background: var(--bg); color: white; font-family: sans-serif; margin: 0; padding: 20px; text-align: center; }
-        .card { background: #111; border: 1px solid #222; padding: 30px; border-radius: 30px; max-width: 400px; margin: 0 auto; }
+        .card { background: #111; border: 1px solid #222; padding: 30px; border-radius: 30px; max-width: 400px; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         .amount-input { background: transparent; border: none; color: white; font-size: 3.5rem; width: 100%; text-align: center; outline: none; margin: 10px 0; font-weight: 800; }
         .mode-toggle { display: flex; gap: 10px; margin-bottom: 20px; }
         .mode-btn { flex: 1; padding: 10px; border-radius: 12px; border: 1px solid #333; background: #1a1a1a; color: white; cursor: pointer; transition: 0.2s; }
@@ -44,7 +45,6 @@ HTML_TEMPLATE = """
         .action-label { font-weight: bold; color: var(--accent); margin-bottom: 15px; font-size: 1.2rem; display: block; }
         #paypal-button-container { min-height: 150px; }
 
-        /* Legal Styling */
         .legal-footer { margin-top: 25px; font-size: 11px; color: #444; line-height: 1.4; }
         .legal-link { color: #666; text-decoration: underline; cursor: pointer; }
         .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:1000; padding: 20px; box-sizing: border-box; }
@@ -87,6 +87,7 @@ HTML_TEMPLATE = """
 
     <script>
         let mode = 'deposit';
+        let typingTimer;
 
         const legalTexts = {
             tos: {
@@ -109,11 +110,44 @@ HTML_TEMPLATE = """
             document.getElementById('legal-modal').style.display = 'none';
         }
 
+        // --- NEW RE-RENDER LOGIC ---
+        function renderButtons() {
+            const currentAmt = document.getElementById('amount').value || "0.01";
+            const container = document.getElementById('paypal-button-container');
+            container.innerHTML = ''; // Kill the old button
+
+            paypal.Buttons({
+                commit: true, // Forces "Pay [Amount]" text on blue button
+                style: { shape: 'pill', color: 'gold', layout: 'vertical', label: 'pay' },
+                createOrder: function(data, actions) {
+                    const email = document.getElementById('recipient-email').value;
+                    let url = '/create-order?amt=' + currentAmt;
+                    if(mode === 'send' && email) url += '&to=' + encodeURIComponent(email);
+
+                    return fetch(url, { method: 'POST' })
+                        .then(res => res.json())
+                        .then(order => order.id);
+                },
+                onApprove: function(data, actions) {
+                    return fetch('/capture/' + data.orderID, { method: 'POST' })
+                        .then(res => res.json())
+                        .then(() => {
+                            alert('AuraPay Success: Transaction Complete');
+                            location.reload();
+                        });
+                }
+            }).render('#paypal-button-container');
+        }
+
         function updateActionText() {
             const amt = document.getElementById('amount').value || "0.00";
             const label = document.getElementById('dynamic-action-text');
             const verb = (mode === 'deposit') ? 'Pay' : 'Send';
             label.innerText = `${verb} $${amt}`;
+
+            // Refresh the blue button after user stops typing (500ms delay)
+            clearTimeout(typingTimer);
+            typingTimer = setTimeout(renderButtons, 500);
         }
 
         function setMode(newMode) {
@@ -124,27 +158,7 @@ HTML_TEMPLATE = """
             updateActionText();
         }
 
-        paypal.Buttons({
-            style: { shape: 'pill', color: 'gold', layout: 'vertical', label: 'pay' },
-            createOrder: function(data, actions) {
-                const amt = document.getElementById('amount').value;
-                const email = document.getElementById('recipient-email').value;
-                let url = '/create-order?amt=' + amt;
-                if(mode === 'send' && email) url += '&to=' + encodeURIComponent(email);
-
-                return fetch(url, { method: 'POST' })
-                    .then(res => res.json())
-                    .then(order => order.id);
-            },
-            onApprove: function(data, actions) {
-                return fetch('/capture/' + data.orderID, { method: 'POST' })
-                    .then(res => res.json())
-                    .then(() => {
-                        alert('AuraPay Success: Transaction Complete');
-                        location.reload();
-                    });
-            }
-        }).render('#paypal-button-container');
+        window.onload = renderButtons;
     </script>
 </body>
 </html>
@@ -159,15 +173,13 @@ def create_order():
     token = get_access_token()
     amount = request.args.get('amt', '0.01')
     payee_email = request.args.get('to')
-
     payload = {
         "intent": "CAPTURE",
         "purchase_units": [{"amount": {"currency_code": "USD", "value": amount}}]
     }
-
     if payee_email:
         payload["purchase_units"][0]["payee"] = {"email_address": payee_email}
-
+    
     r = requests.post(f"{PAYPAL_BASE_URL}/v2/checkout/orders", json=payload, 
                      headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
     return jsonify(r.json())
