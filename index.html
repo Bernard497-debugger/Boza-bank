@@ -10,107 +10,138 @@
         .card { background: #111; border: 1px solid #222; padding: 30px; border-radius: 30px; max-width: 400px; margin: 0 auto; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
         .amount-input { background: transparent; border: none; color: white; font-size: 3.5rem; width: 100%; text-align: center; outline: none; margin: 10px 0; font-weight: 800; }
         .mode-toggle { display: flex; gap: 10px; margin-bottom: 20px; }
-        .mode-btn { flex: 1; padding: 10px; border-radius: 12px; border: 1px solid #333; background: #1a1a1a; color: white; cursor: pointer; transition: 0.2s; }
+        .mode-btn { flex: 1; padding: 12px; border-radius: 12px; border: 1px solid #333; background: #1a1a1a; color: white; cursor: pointer; transition: 0.2s; font-size: 14px; }
         .mode-btn.active { background: var(--accent); color: black; border-color: var(--accent); font-weight: bold; }
-        .email-field { width: 100%; padding: 15px; border-radius: 12px; border: 1px solid #333; background: #000; color: white; margin-bottom: 20px; display: none; box-sizing: border-box; }
+        .email-field { width: 100%; padding: 15px; border-radius: 12px; border: 1px solid #333; background: #000; color: white; margin-bottom: 20px; display: none; box-sizing: border-box; font-size: 16px; }
         .action-label { font-weight: bold; color: var(--accent); margin-bottom: 15px; font-size: 1.2rem; display: block; }
-        #paypal-button-container { min-height: 150px; opacity: 0.5; pointer-events: none; }
+        
+        /* Buttons are hidden until backend confirms ID */
+        #paypal-button-container { min-height: 150px; transition: opacity 0.5s; opacity: 0.2; pointer-events: none; }
         #paypal-button-container.ready { opacity: 1; pointer-events: auto; }
-        .legal-footer { margin-top: 25px; font-size: 11px; color: #444; }
+
+        .legal-footer { margin-top: 25px; font-size: 11px; color: #444; line-height: 1.4; }
         .legal-link { color: #666; text-decoration: underline; cursor: pointer; }
-        .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:1000; padding: 20px; box-sizing: border-box; }
-        .modal-content { background: #1a1a1a; padding: 25px; border-radius: 20px; text-align: left; max-width: 400px; margin: 50px auto; border: 1px solid #333; }
-        .close-btn { background: var(--accent); color: black; border: none; padding: 10px; border-radius: 10px; width: 100%; font-weight: bold; margin-top: 15px; cursor: pointer; }
+        
+        /* Loader Animation */
+        .spinner { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid var(--accent); border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; display: inline-block; margin-bottom: 10px; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        #loading-ui { display: block; }
     </style>
 </head>
 <body>
     <div class="card">
         <h1 style="color: var(--accent); margin-bottom: 5px;">AuraPay</h1>
-        <p style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">LIVE TERMINAL</p>
-        <input type="number" id="amount" class="amount-input" value="0.01" step="0.01" oninput="updateActionText()">
+        <p style="font-size: 10px; opacity: 0.5; letter-spacing: 2px; margin-bottom: 20px;">LIVE TERMINAL</p>
+        
+        <input type="number" id="amount" class="amount-input" value="1.00" step="0.01" oninput="updateActionText()">
+        
         <div class="mode-toggle">
             <button id="dep-btn" class="mode-btn active" onclick="setMode('deposit')">Deposit</button>
-            <button id="snd-btn" class="mode-btn" onclick="setMode('send')">Send</button>
+            <button id="snd-btn" class="mode-btn" onclick="setMode('send')">Send Money</button>
         </div>
+
         <input type="email" id="recipient-email" class="email-field" placeholder="Recipient PayPal Email">
-        <span id="dynamic-action-text" class="action-label">Initializing...</span>
+        
+        <div id="loading-ui">
+            <div class="spinner"></div>
+            <p style="font-size: 12px; color: #666;">Connecting to Secure Server...</p>
+        </div>
+
+        <span id="dynamic-action-text" class="action-label" style="display:none;">Pay $1.00</span>
+        
         <div id="paypal-button-container"></div>
+
         <div class="legal-footer">
             By proceeding, you agree to our <br>
-            <span class="legal-link" onclick="openLegal('tos')">Terms of Service</span> & 
-            <span class="legal-link" onclick="openLegal('refund')">Refund Policy</span>
+            <span class="legal-link">Terms of Service</span> & <span class="legal-link">Refund Policy</span>
         </div>
-    </div>
-
-    <div id="legal-modal" class="modal">
-        <div class="modal-content"><h2 id="modal-title" style="color: var(--accent); margin-top: 0;"></h2><div id="modal-body" style="font-size: 13px; line-height: 1.6; color: #bbb;"></div><button class="close-btn" onclick="closeLegal()">I AGREE</button></div>
     </div>
 
     <script>
-        const BASE_URL = 'https://YOUR-APP-NAME.onrender.com'; // <--- CHANGE THIS
+        // --- CONFIGURATION ---
+        // 1. CHANGE THIS TO YOUR ACTUAL RENDER URL
+        const BASE_URL = 'https://YOUR-APP-NAME.onrender.com'; 
+        
         let mode = 'deposit';
         let typingTimer;
 
+        // --- STEP 1: FETCH PUBLIC ID FROM BACKEND ---
         async function initApp() {
+            console.log("AuraPay: Initializing...");
             try {
-                const res = await fetch(`${BASE_URL}/get-config`);
-                const config = await res.json();
+                const response = await fetch(`${BASE_URL}/get-config`);
+                if (!response.ok) throw new Error("Backend connection failed");
+                
+                const data = await response.json();
+                console.log("AuraPay: Config received. Loading SDK...");
+
+                // --- STEP 2: DYNAMICALLY LOAD PAYPAL ---
                 const script = document.createElement('script');
-                script.src = `https://www.paypal.com/sdk/js?client-id=${config.client_id}&currency=USD`;
+                script.src = `https://www.paypal.com/sdk/js?client-id=${data.client_id}&currency=USD`;
                 script.onload = () => {
+                    console.log("AuraPay: SDK Ready.");
+                    document.getElementById('loading-ui').style.display = 'none';
+                    document.getElementById('dynamic-action-text').style.display = 'block';
                     document.getElementById('paypal-button-container').classList.add('ready');
-                    updateActionText();
                     renderButtons();
                 };
                 document.head.appendChild(script);
-            } catch (e) {
-                document.getElementById('dynamic-action-text').innerText = "Connection Error";
+
+            } catch (err) {
+                console.error("AuraPay Error:", err);
+                document.getElementById('loading-ui').innerHTML = 
+                    `<p style="color: #ff4444;">Connection Error.<br>Please refresh the page.</p>`;
             }
         }
 
+        // --- STEP 3: RENDER THE BUTTONS ---
         function renderButtons() {
-            const amt = document.getElementById('amount').value || "0.01";
-            const container = document.getElementById('paypal-button-container');
-            container.innerHTML = '';
+            const currentAmt = document.getElementById('amount').value || "1.00";
+            document.getElementById('paypal-button-container').innerHTML = '';
+            
             paypal.Buttons({
-                commit: true,
                 style: { shape: 'pill', color: 'gold', layout: 'vertical', label: 'pay' },
-                createOrder: (data, actions) => {
-                    let url = `${BASE_URL}/create-order?amt=${amt}`;
+                createOrder: async (data, actions) => {
                     const email = document.getElementById('recipient-email').value;
+                    let url = `${BASE_URL}/create-order?amt=${currentAmt}`;
                     if(mode === 'send' && email) url += `&to=${encodeURIComponent(email)}`;
-                    return fetch(url, { method: 'POST' }).then(r => r.json()).then(o => o.id);
+                    
+                    const res = await fetch(url, { method: 'POST' });
+                    const order = await res.json();
+                    return order.id;
                 },
-                onApprove: (data, actions) => {
-                    return fetch(`${BASE_URL}/capture/${data.orderID}`, { method: 'POST' })
-                        .then(r => r.json()).then(() => { alert('Success!'); location.reload(); });
+                onApprove: async (data, actions) => {
+                    const res = await fetch(`${BASE_URL}/capture/${data.orderID}`, { method: 'POST' });
+                    const details = await res.json();
+                    alert('Transaction Successful! Check your email for receipt.');
+                    location.reload();
+                },
+                onError: (err) => {
+                    console.error("PayPal Error:", err);
+                    alert("Payment failed. Please check your card or bank settings.");
                 }
             }).render('#paypal-button-container');
         }
 
         function updateActionText() {
-            const amt = document.getElementById('amount').value || "0.00";
-            document.getElementById('dynamic-action-text').innerText = `${(mode === 'deposit') ? 'Pay' : 'Send'} $${amt}`;
+            const val = document.getElementById('amount').value || "0.00";
+            document.getElementById('dynamic-action-text').innerText = 
+                `${(mode === 'deposit') ? 'Pay' : 'Send'} $${val}`;
+            
             clearTimeout(typingTimer);
             typingTimer = setTimeout(renderButtons, 500);
         }
 
-        function setMode(m) {
-            mode = m;
+        function setMode(newMode) {
+            mode = newMode;
             document.getElementById('dep-btn').classList.toggle('active', mode === 'deposit');
             document.getElementById('snd-btn').classList.toggle('active', mode === 'send');
             document.getElementById('recipient-email').style.display = (mode === 'send') ? 'block' : 'none';
             updateActionText();
         }
 
-        const legalTexts = {
-            tos: { title: "Terms of Service", body: "AuraPay is a bridge to PayPal. We don't store card data. You are responsible for recipient email accuracy." },
-            refund: { title: "Refund Policy", body: "Transactions are final. Refunds must be handled via PayPal Resolution Center." }
-        };
-        function openLegal(t) { document.getElementById('modal-title').innerText = legalTexts[t].title; document.getElementById('modal-body').innerText = legalTexts[t].body; document.getElementById('legal-modal').style.display = 'block'; }
-        function closeLegal() { document.getElementById('legal-modal').style.display = 'none'; }
-
+        // Start the engine
         window.onload = initApp;
     </script>
 </body>
-  </html>
+    </html>
