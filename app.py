@@ -2,7 +2,7 @@ import os
 import requests
 import uuid
 from datetime import datetime
-from flask import Flask, render_template_string, jsonify, request
+from flask import Flask, render_template_string, jsonify, request, make_response
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
@@ -11,6 +11,7 @@ app.secret_key = os.environ.get('SESSION_KEY', 'KHALI_SECURE_777')
 CORS(app)
 
 # --- DATABASE CONFIGURATION ---
+# Fix for Render: SQLAlchemy requires 'postgresql://' instead of 'postgres://'
 db_url = os.environ.get('DATABASE_URL')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -185,12 +186,27 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- GOOGLE CONSOLE VERIFICATION ROUTE ---
+# --- SEO & VERIFICATION ROUTES ---
 @app.route('/google5ce0866dc1e9ca22.html')
 def google_verify():
     return "google-site-verification: google5ce0866dc1e9ca22.html"
 
-# --- CORE ROUTES ---
+@app.route('/sitemap.xml', methods=['GET'])
+def sitemap():
+    xml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+        <url>
+            <loc>https://{request.host}/</loc>
+            <lastmod>{datetime.now().strftime('%Y-%m-%d')}</lastmod>
+            <changefreq>daily</changefreq>
+            <priority>1.0</priority>
+        </url>
+    </urlset>"""
+    response = make_response(xml_content)
+    response.headers['Content-Type'] = 'application/xml'
+    return response
+
+# --- CORE LOGIC ROUTES ---
 @app.route('/')
 def index():
     master = UserAccount.query.filter_by(email="master@aurapay").first()
