@@ -1,9 +1,12 @@
 import os
 import requests
-from flask import Flask, render_template_string, jsonify, request
+import uuid
+from datetime import datetime
+from flask import Flask, render_template_string, jsonify, request, session
 from flask_cors import CORS
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SESSION_KEY', 'KHALI_SECURE_777') # Needed for Ledger
 CORS(app)
 
 # --- LIVE CONFIG ---
@@ -42,11 +45,20 @@ HTML_TEMPLATE = """
         .mode-btn.active { background: var(--accent); color: black; border-color: var(--accent); font-weight: bold; }
         .email-field { width: 100%; padding: 15px; border-radius: 12px; border: 1px solid #333; background: #000; color: white; margin-bottom: 20px; display: none; box-sizing: border-box; }
         
-        .action-label { font-weight: bold; color: var(--accent); margin-bottom: 15px; font-size: 1.2rem; display: block; }
+        .action-label { font-weight: bold; color: var(--accent); margin-bottom: 5px; font-size: 1.2rem; display: block; }
+        .fee-label { font-size: 11px; color: #666; margin-bottom: 15px; }
+        
         #paypal-button-container { min-height: 150px; }
+
+        /* LEDGER & DISCLOSURE STYLES */
+        .balance-display { background: #000; padding: 10px; border-radius: 10px; border: 1px dashed #333; margin-bottom: 20px; }
+        .history-section { text-align: left; margin-top: 20px; border-top: 1px solid #222; padding-top: 15px; font-family: monospace; }
+        .history-item { font-size: 10px; color: #888; margin-bottom: 5px; }
 
         .legal-footer { margin-top: 25px; font-size: 11px; color: #444; line-height: 1.4; }
         .legal-link { color: #666; text-decoration: underline; cursor: pointer; }
+        .disclosure-box { font-size: 9px; color: #333; margin-top: 15px; text-align: justify; line-height: 1.2; border-top: 1px solid #222; padding-top: 10px;}
+        
         .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:1000; padding: 20px; box-sizing: border-box; }
         .modal-content { background: #1a1a1a; padding: 25px; border-radius: 20px; text-align: left; max-width: 400px; margin: 50px auto; border: 1px solid #333; }
         .close-btn { background: var(--accent); color: black; border: none; padding: 10px; border-radius: 10px; width: 100%; font-weight: bold; margin-top: 15px; cursor: pointer; }
@@ -55,9 +67,13 @@ HTML_TEMPLATE = """
 <body>
     <div class="card">
         <h1 style="color: var(--accent); margin-bottom: 5px;">AuraPay</h1>
-        <p style="font-size: 10px; opacity: 0.5; letter-spacing: 2px;">LIVE TERMINAL</p>
+        
+        <div class="balance-display">
+            <span style="font-size: 10px; color: #666;">AVAILABLE BALANCE</span><br>
+            <span style="font-size: 1.2rem; font-weight: bold;">${{ "{:.2f}".format(balance) }}</span>
+        </div>
 
-        <input type="number" id="amount" class="amount-input" value="0.01" step="0.01" oninput="updateActionText()">
+        <input type="number" id="amount" class="amount-input" value="10.00" step="0.01" oninput="updateActionText()">
 
         <div class="mode-toggle">
             <button id="dep-btn" class="mode-btn active" onclick="setMode('deposit')">Deposit</button>
@@ -66,9 +82,26 @@ HTML_TEMPLATE = """
 
         <input type="email" id="recipient-email" class="email-field" placeholder="Recipient PayPal Email">
 
-        <span id="dynamic-action-text" class="action-label">Pay $0.01</span>
+        <span id="dynamic-action-text" class="action-label">Pay $10.00</span>
+        <div class="fee-label">+ 1% Institutional Processing Fee</div>
 
         <div id="paypal-button-container"></div>
+
+        <div class="history-section">
+            <div style="font-size: 10px; font-weight: bold; margin-bottom: 8px;">TRANSACTION HISTORY</div>
+            {% for tx in history %}
+            <div class="history-item">[{{ tx.date }}] {{ tx.id }} | +${{ tx.amt }}</div>
+            {% endfor %}
+            {% if not history %}
+            <div class="history-item" style="opacity: 0.3;">NO RECENT ACTIVITY</div>
+            {% endif %}
+        </div>
+
+        <div class="disclosure-box">
+            <strong>CUSTODY DISCLOSURE:</strong> AuraPay utilizes a 'Pooled Fund' model. 
+            Deposits are recorded on our digital ledger while fiat liquidity is secured 
+            in our Master Business Account to facilitate instant features.
+        </div>
 
         <div class="legal-footer">
             By proceeding, you agree to our <br>
@@ -110,14 +143,13 @@ HTML_TEMPLATE = """
             document.getElementById('legal-modal').style.display = 'none';
         }
 
-        // --- NEW RE-RENDER LOGIC ---
         function renderButtons() {
             const currentAmt = document.getElementById('amount').value || "0.01";
             const container = document.getElementById('paypal-button-container');
-            container.innerHTML = ''; // Kill the old button
+            container.innerHTML = ''; 
 
             paypal.Buttons({
-                commit: true, // Forces "Pay [Amount]" text on blue button
+                commit: true, 
                 style: { shape: 'pill', color: 'gold', layout: 'vertical', label: 'pay' },
                 createOrder: function(data, actions) {
                     const email = document.getElementById('recipient-email').value;
@@ -132,7 +164,6 @@ HTML_TEMPLATE = """
                     return fetch('/capture/' + data.orderID, { method: 'POST' })
                         .then(res => res.json())
                         .then(() => {
-                            alert('AuraPay Success: Transaction Complete');
                             location.reload();
                         });
                 }
@@ -145,7 +176,6 @@ HTML_TEMPLATE = """
             const verb = (mode === 'deposit') ? 'Pay' : 'Send';
             label.innerText = `${verb} $${amt}`;
 
-            // Refresh the blue button after user stops typing (500ms delay)
             clearTimeout(typingTimer);
             typingTimer = setTimeout(renderButtons, 500);
         }
@@ -166,16 +196,28 @@ HTML_TEMPLATE = """
 
 @app.route('/')
 def index():
-    return render_template_string(HTML_TEMPLATE, client_id=PAYPAL_CLIENT_ID)
+    if 'balance' not in session: session['balance'] = 0.00
+    if 'history' not in session: session['history'] = []
+    return render_template_string(HTML_TEMPLATE, 
+                                client_id=PAYPAL_CLIENT_ID, 
+                                balance=session['balance'], 
+                                history=session['history'])
 
 @app.route('/create-order', methods=['POST'])
 def create_order():
     token = get_access_token()
-    amount = request.args.get('amt', '0.01')
+    base_amount = float(request.args.get('amt', '0.01'))
+    
+    # Logic: Charge 1% extra for your platform
+    total_charged = "{:.2f}".format(base_amount * 1.01)
+    
     payee_email = request.args.get('to')
     payload = {
         "intent": "CAPTURE",
-        "purchase_units": [{"amount": {"currency_code": "USD", "value": amount}}]
+        "purchase_units": [{
+            "amount": {"currency_code": "USD", "value": total_charged},
+            "description": "AuraPay Digital Service"
+        }]
     }
     if payee_email:
         payload["purchase_units"][0]["payee"] = {"email_address": payee_email}
@@ -189,7 +231,23 @@ def capture(order_id):
     token = get_access_token()
     r = requests.post(f"{PAYPAL_BASE_URL}/v2/checkout/orders/{order_id}/capture", 
                      headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
-    return jsonify(r.json())
+    
+    res_data = r.json()
+    if res_data.get('status') == 'COMPLETED':
+        # Update session ledger
+        val = float(res_data['purchase_units'][0]['payments']['captures'][0]['amount']['value'])
+        clean_amt = val / 1.01 # Remove fee for user balance
+        
+        session['balance'] += clean_amt
+        new_tx = {
+            "id": "TX-" + str(uuid.uuid4())[:6].upper(),
+            "date": datetime.now().strftime("%H:%M"),
+            "amt": "{:.2f}".format(clean_amt)
+        }
+        session['history'].insert(0, new_tx)
+        session.modified = True
+        
+    return jsonify(res_data)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
