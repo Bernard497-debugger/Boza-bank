@@ -7,7 +7,8 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('SESSION_KEY', 'KHALI_SECURE_777_AURA')
+# Render needs a secret key for sessions to work
+app.secret_key = os.environ.get('SESSION_KEY', 'KHALI_SECURE_777_AURA_99')
 CORS(app)
 
 # --- DATABASE CONFIGURATION ---
@@ -32,6 +33,7 @@ class Transaction(db.Model):
     amount = db.Column(db.Float)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)
 
+# Ensure tables are created before first request
 with app.app_context():
     db.create_all()
 
@@ -46,9 +48,11 @@ def get_access_token():
             auth=(PAYPAL_CLIENT_ID, PAYPAL_SECRET),
             data={'grant_type': 'client_credentials'}, timeout=10)
         return res.json().get('access_token')
-    except: return None
+    except Exception as e:
+        print(f"Token Error: {e}")
+        return None
 
-# --- UI TEMPLATE (FIXED LEGAL VISIBILITY) ---
+# --- UI TEMPLATE ---
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -70,13 +74,8 @@ HTML_TEMPLATE = """
         .action-label { font-weight: bold; color: var(--accent); font-size: 1.1rem; }
         .history-section { text-align: left; margin-top: 20px; border-top: 1px solid #222; padding-top: 15px; }
         .history-item { font-size: 10px; color: #666; margin-bottom: 5px; font-family: monospace; }
-        
-        /* LEGAL SECTION */
         .disclosure-box { font-size: 10px; color: #444; margin-top: 20px; text-align: center; padding: 10px; border-top: 1px solid #222; }
-        .legal-links { margin-top: 10px; display: block; }
-        .legal-link { color: var(--accent); text-decoration: underline; cursor: pointer; font-size: 11px; margin: 0 10px; opacity: 0.8; }
-        
-        /* MODAL */
+        .legal-link { color: var(--accent); text-decoration: underline; cursor: pointer; font-size: 11px; margin: 0 10px; }
         .modal { display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.9); z-index:1000; }
         .modal-content { background: #111; padding: 30px; border-radius: 20px; text-align: left; max-width: 350px; margin: 100px auto; border: 1px solid #333; }
         .close-btn { background: var(--accent); color: black; border: none; padding: 10px; border-radius: 10px; width: 100%; font-weight: bold; margin-top: 20px; cursor: pointer; }
@@ -89,35 +88,28 @@ HTML_TEMPLATE = """
             <span style="font-size: 10px; color: #666;">PERSONAL LEDGER</span><br>
             <span style="font-size: 1.5rem; font-weight: bold;">${{ "{:.2f}".format(balance) }}</span>
         </div>
-        
         <input type="number" id="amount" class="amount-input" value="10.00" oninput="updateActionText()">
-        
         <div class="mode-toggle">
             <button id="dep-btn" class="mode-btn active" onclick="setMode('deposit')">Deposit</button>
             <button id="snd-btn" class="mode-btn" onclick="setMode('send')">Send</button>
         </div>
-        
         <input type="email" id="recipient-email" class="email-field" placeholder="Recipient PayPal Email">
         <p id="dynamic-action-text" class="action-label">Pay $10.00</p>
-        
         <div id="paypal-button-container"></div>
-        
         <div class="history-section">
             <div style="font-size: 10px; font-weight: bold; color: #444; margin-bottom: 8px;">MY TRANSACTION HISTORY</div>
             {% for tx in history %}
             <div class="history-item">[{{ tx.timestamp.strftime('%H:%M') }}] {{ tx.tx_id }} | +${{ "%.2f"|format(tx.amount) }}</div>
             {% endfor %}
         </div>
-
         <div class="disclosure-box">
             <strong>CUSTODY DISCLOSURE:</strong> Funds are secured in our pooled Master Account.
-            <div class="legal-links">
+            <div style="margin-top:10px;">
                 <span class="legal-link" onclick="openLegal('tos')">Terms of Service</span>
                 <span class="legal-link" onclick="openLegal('refund')">Refund Policy</span>
             </div>
         </div>
     </div>
-
     <div id="legal-modal" class="modal">
         <div class="modal-content">
             <h2 id="modal-title" style="color: var(--accent); margin-top: 0;"></h2>
@@ -125,21 +117,18 @@ HTML_TEMPLATE = """
             <button class="close-btn" onclick="closeLegal()">I UNDERSTAND</button>
         </div>
     </div>
-
     <script>
         let mode = 'deposit';
         const legalTexts = {
             tos: { title: "Terms of Service", body: "AuraPay acts as a digital ledger for PayPal deposits. Users are responsible for recipient accuracy. All deposits are final once captured." },
             refund: { title: "Refund Policy", body: "Refunds are processed solely through PayPal's resolution center. AuraPay does not hold reversal rights for completed digital captures." }
         };
-
         function openLegal(type) {
             document.getElementById('modal-title').innerText = legalTexts[type].title;
             document.getElementById('modal-body').innerText = legalTexts[type].body;
             document.getElementById('legal-modal').style.display = 'block';
         }
         function closeLegal() { document.getElementById('legal-modal').style.display = 'none'; }
-
         function renderButtons() {
             const currentAmt = document.getElementById('amount').value || "0.01";
             const container = document.getElementById('paypal-button-container');
@@ -157,13 +146,11 @@ HTML_TEMPLATE = """
                 }
             }).render('#paypal-button-container');
         }
-
         function updateActionText() {
             const amt = document.getElementById('amount').value || "0.00";
             document.getElementById('dynamic-action-text').innerText = (mode === 'deposit' ? 'Pay' : 'Send') + ' $' + amt;
             renderButtons();
         }
-
         function setMode(newMode) {
             mode = newMode;
             document.getElementById('dep-btn').classList.toggle('active', mode === 'deposit');
@@ -177,7 +164,7 @@ HTML_TEMPLATE = """
 </html>
 """
 
-# --- LOGIC ROUTES (NO CHANGES NEEDED TO LOGIC) ---
+# --- ROUTES ---
 @app.route('/')
 def index():
     user_email = session.get('active_user')
@@ -193,7 +180,7 @@ def index():
 @app.route('/create-order', methods=['POST'])
 def create_order():
     token = get_access_token()
-    amt = float(request.args.get('amt', '0.01'))
+    amt = float(request.args.get('amt', '10.00'))
     total = "{:.2f}".format(amt * 1.01)
     payee_email = request.args.get('to')
     if payee_email: session['active_user'] = payee_email
